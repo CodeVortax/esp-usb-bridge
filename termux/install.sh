@@ -10,6 +10,8 @@ set -e
 have_pkg() { dpkg -s "$1" >/dev/null 2>&1; }
 in_repo()  { apt-cache show "$1" >/dev/null 2>&1; }
 have_mod() { python -c "import $1" >/dev/null 2>&1; }
+# esptool cannot be imported on Android's Python before espb patches it, so ask pip's metadata instead
+have_dist() { python -c "import importlib.metadata as m; m.version('$1')" >/dev/null 2>&1; }
 
 # apt_get <pkg>...: install the ones that are not installed yet; returns 1 if any is missing from the repo
 apt_get() {
@@ -43,11 +45,11 @@ else
 fi
 
 echo "==> esptool"
-if have_mod esptool; then
+if have_dist esptool; then
     echo "  already installed"
 else
     apt_get esptool || true
-    have_mod esptool || pip_get esptool || pip_get "esptool<5"
+    have_dist esptool || pip_get esptool || pip_get "esptool<5"
 fi
 
 echo "==> espb"

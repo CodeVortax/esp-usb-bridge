@@ -23,6 +23,23 @@ import subprocess
 import sys
 import time
 
+# Python 3.13+ on Android reports sys.platform == "android", which pySerial 3.5 does not know: importing
+# serial.tools.list_ports (and therefore esptool and miniterm) fails with "don't know how to enumerate ttys".
+# Pretending to be Linux is enough, since we only ever use network (rfc2217://) ports.
+if sys.platform == "android":
+    sys.platform = "linux"
+
+# The same fix for child processes: run a module with sys.platform patched.
+PY_BOOT = ("import sys, runpy\n"
+           "if sys.platform == 'android': sys.platform = 'linux'\n"
+           "mod = sys.argv.pop(1)\n"
+           "runpy.run_module(mod, run_name='__main__', alter_sys=True)\n")
+
+
+def py_module(mod, *args):
+    return [sys.executable, "-c", PY_BOOT, mod] + list(args)
+
+
 HOST = os.environ.get("ESPB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ESPB_PORT", "2217"))
 STATUS_PORT = int(os.environ.get("ESPB_STATUS_PORT", str(PORT + 1)))
@@ -72,7 +89,7 @@ def start_app():
     return True
 
 
-def ensure_bridge(wait=25):
+def ensure_bridge(wait=45):
     """Make sure the bridge is up, starting the app if needed. Returns True when it is."""
     if read_status():
         return True
@@ -93,13 +110,10 @@ def ensure_bridge(wait=25):
 
 def esptool_major():
     try:
-        import esptool  # noqa: F401
-    except ImportError:
+        from importlib.metadata import version
+        return int(version("esptool").split(".")[0])
+    except Exception:
         return None
-    try:
-        return int(str(esptool.__version__).split(".")[0])
-    except (AttributeError, ValueError):
-        return 4
 
 
 def esptool_cmd(chip, baud, command, *args):
@@ -109,8 +123,8 @@ def esptool_cmd(chip, baud, command, *args):
         sys.exit("esptool is not installed. Run:  pip install esptool pyserial")
     if major >= 5:
         command = command.replace("_", "-")
-    return [sys.executable, "-m", "esptool", "--chip", chip, "--port", port_url(),
-            "--baud", str(baud), command] + list(args)
+    return py_module("esptool", "--chip", chip, "--port", port_url(),
+                     "--baud", str(baud), command, *args)
 
 
 def run(cmd, dry_run):
@@ -198,8 +212,8 @@ def cmd_monitor(args):
     if args.reset:
         reset_board()
     print("Monitor on %s at %d baud. Press Ctrl+] to quit." % (port_url(), args.baud))
-    cmd = [sys.executable, "-m", "serial.tools.miniterm", "--raw", "--dtr", "0", "--rts", "0",
-           port_url(), str(args.baud)]
+    cmd = py_module("serial.tools.miniterm", "--raw", "--dtr", "0", "--rts", "0",
+                    port_url(), str(args.baud))
     return subprocess.call(cmd)
 
 
@@ -301,6 +315,10 @@ def main(argv=None):
 
     sub.add_parser("doctor", help="check the setup").set_defaults(func=cmd_doctor)
 
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "help":
+        argv = ["--help"]
     args = p.parse_args(argv)
     if not getattr(args, "func", None):
         p.print_help()
