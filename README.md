@@ -13,7 +13,7 @@ The port is bound to localhost only, so nothing else on your network can reach i
 ## Install
 
 1. **App.** Download `esp-usb-bridge-debug-apk` from the latest [Actions run](../../actions) (or a release), unzip it and install the APK.
-2. **Termux.** Run:
+2. **Termux.** Uses Termux packages where they exist, skips what is installed, no repo refresh:
    ```sh
    curl -fsSL https://raw.githubusercontent.com/CodeVortax/esp-usb-bridge/main/termux/install.sh | bash
    ```
