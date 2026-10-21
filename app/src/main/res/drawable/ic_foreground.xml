@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chip with pins: the ESP32 on the end of the cable. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M38,38h32v32h-32z" />
+    <path android:fillColor="#4285F4"
+        android:pathData="M45,45h18v18h-18z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M42,32h4v6h-4z M52,32h4v6h-4z M62,32h4v6h-4z
+                          M42,70h4v6h-4z M52,70h4v6h-4z M62,70h4v6h-4z
+                          M32,42h6v4h-6z M32,52h6v4h-6z M32,62h6v4h-6z
+                          M70,42h6v4h-6z M70,52h6v4h-6z M70,62h6v4h-6z" />
+</vector>

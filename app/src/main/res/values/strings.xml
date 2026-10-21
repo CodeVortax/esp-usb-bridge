@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ESP USB Bridge</string>
+    <string name="channel_name">Bridge status</string>
+</resources>

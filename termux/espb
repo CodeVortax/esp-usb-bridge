@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""espb - flash and monitor an ESP32 from Termux through the ESP USB Bridge app.
+
+The Android app owns the USB port and serves it as an RFC 2217 serial port on
+127.0.0.1:2217. esptool and pySerial speak that natively, so this tool is a thin,
+friendly wrapper:
+
+    espb start                      open the bridge app and start it
+    espb status                     is the bridge up? is a client connected?
+    espb flash firmware.bin         write a file (default address 0x0, 460800 baud)
+    espb erase | info | mac         erase flash / chip + flash info / MAC address
+    espb monitor                    interactive serial monitor (Ctrl+] to quit)
+    espb log --seconds 20           print timestamped lines and exit (good for scripts)
+    espb doctor                     check that everything is installed
+"""
+import argparse
+import datetime
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+
+HOST = os.environ.get("ESPB_HOST", "127.0.0.1")
+PORT = int(os.environ.get("ESPB_PORT", "2217"))
+STATUS_PORT = int(os.environ.get("ESPB_STATUS_PORT", str(PORT + 1)))
+APP_ID = "com.codevortax.espusbbridge"
+VERSION = "0.1.0-beta"
+
+
+def port_url():
+    return "rfc2217://%s:%d" % (HOST, PORT)
+
+
+# ---- bridge status ------------------------------------------------------------
+
+def read_status(timeout=1.0):
+    """Returns the status line as a dict, or None when the bridge is not running.
+
+    This uses the read-only status port, so it never disturbs a flash or monitor in progress.
+    """
+    try:
+        with socket.create_connection((HOST, STATUS_PORT), timeout=timeout) as s:
+            s.settimeout(timeout)
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = s.recv(256)
+                if not chunk:
+                    break
+                data += chunk
+    except OSError:
+        return None
+    parts = data.decode("ascii", "replace").split()
+    if len(parts) < 2 or parts[0] != "ESPBRIDGE":
+        return None
+    return dict(p.split("=", 1) for p in parts[2:] if "=" in p)
+
+
+def start_app():
+    """Ask Android to open the bridge app and start it (needs the `am` tool, present in Termux)."""
+    if not shutil.which("am"):
+        print("The `am` command is not available. Open the ESP USB Bridge app and tap Start.")
+        return False
+    cmd = ["am", "start", "-n", APP_ID + "/.MainActivity", "--ez", "autostart", "true"]
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+    if r.returncode != 0 or "Error" in r.stdout:
+        print(r.stdout.strip())
+        print("Could not open the app. Is ESP USB Bridge installed? Open it by hand and tap Start.")
+        return False
+    return True
+
+
+def ensure_bridge(wait=25):
+    """Make sure the bridge is up, starting the app if needed. Returns True when it is."""
+    if read_status():
+        return True
+    print("Bridge is not running, opening the app...")
+    if not start_app():
+        return False
+    print("If Android asks for USB access, tap OK (choose \"Always\"). Waiting for the bridge...")
+    end = time.time() + wait
+    while time.time() < end:
+        if read_status():
+            return True
+        time.sleep(0.5)
+    print("The bridge did not come up. Is the board plugged in (data cable + OTG adapter)?")
+    return False
+
+
+# ---- esptool ------------------------------------------------------------------
+
+def esptool_major():
+    try:
+        import esptool  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        return int(str(esptool.__version__).split(".")[0])
+    except (AttributeError, ValueError):
+        return 4
+
+
+def esptool_cmd(chip, baud, command, *args):
+    """Builds an esptool command line. esptool 5 renamed `write_flash` to `write-flash`."""
+    major = esptool_major()
+    if major is None:
+        sys.exit("esptool is not installed. Run:  pip install esptool pyserial")
+    if major >= 5:
+        command = command.replace("_", "-")
+    return [sys.executable, "-m", "esptool", "--chip", chip, "--port", port_url(),
+            "--baud", str(baud), command] + list(args)
+
+
+def run(cmd, dry_run):
+    print("$ " + " ".join(cmd))
+    if dry_run:
+        return 0
+    try:
+        return subprocess.call(cmd)
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return 130
+
+
+# ---- commands -----------------------------------------------------------------
+
+def cmd_start(args):
+    if read_status():
+        print("Bridge is already running.")
+        return 0
+    return 0 if ensure_bridge() else 1
+
+
+def cmd_status(args):
+    st = read_status()
+    if not st:
+        print("Bridge: NOT running  (run `espb start`, or open the app and tap Start)")
+        return 1
+    print("Bridge: running")
+    print("  device : %s" % st.get("device", "?").replace("_", " "))
+    print("  client : %s" % ("connected" if st.get("client") == "1" else "none"))
+    print("  traffic: to board %s B, from board %s B" % (st.get("to", "0"), st.get("from", "0")))
+    print("  port   : %s" % port_url())
+    return 0
+
+
+def cmd_flash(args):
+    if not os.path.isfile(args.file):
+        print("File not found: %s" % args.file)
+        return 2
+    size = os.path.getsize(args.file)
+    print("Flashing %s (%d bytes) at %s, %d baud" % (args.file, size, args.addr, args.baud))
+    if not args.dry_run and not ensure_bridge():
+        return 1
+    if args.erase:
+        rc = run(esptool_cmd(args.chip, args.baud, "erase_flash"), args.dry_run)
+        if rc != 0:
+            return rc
+    rc = run(esptool_cmd(args.chip, args.baud, "write_flash", args.addr, args.file), args.dry_run)
+    if rc == 0:
+        print("\nDone. The board was reset. Watch it with:  espb monitor")
+    else:
+        print("\nFlashing failed. Try a lower speed (--baud 115200), check the cable,")
+        print("or hold the BOOT button while it says \"Connecting...\".")
+    return rc
+
+
+def simple_esptool(command, *extra):
+    def handler(args):
+        if not args.dry_run and not ensure_bridge():
+            return 1
+        return run(esptool_cmd(args.chip, args.baud, command, *extra), args.dry_run)
+    return handler
+
+
+def reset_board():
+    """Pulse EN (via RTS) so the board restarts and prints its boot log."""
+    import serial
+    ser = serial.serial_for_url(port_url(), baudrate=115200, timeout=1)
+    try:
+        ser.dtr = False
+        ser.rts = True
+        time.sleep(0.1)
+        ser.rts = False
+    finally:
+        ser.close()
+
+
+def cmd_monitor(args):
+    if not ensure_bridge():
+        return 1
+    try:
+        import serial  # noqa: F401
+    except ImportError:
+        sys.exit("pyserial is not installed. Run:  pip install pyserial")
+    if args.reset:
+        reset_board()
+    print("Monitor on %s at %d baud. Press Ctrl+] to quit." % (port_url(), args.baud))
+    cmd = [sys.executable, "-m", "serial.tools.miniterm", "--raw", "--dtr", "0", "--rts", "0",
+           port_url(), str(args.baud)]
+    return subprocess.call(cmd)
+
+
+def cmd_log(args):
+    if not ensure_bridge():
+        return 1
+    import serial
+    if args.reset:
+        reset_board()
+    ser = serial.serial_for_url(port_url(), baudrate=args.baud, timeout=0.5)
+    out = open(args.out, "a") if args.out else None
+    end = time.time() + args.seconds if args.seconds else None
+    buf = b""
+    try:
+        while end is None or time.time() < end:
+            chunk = ser.read(512)
+            if not chunk:
+                continue
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                text = "[%s] %s" % (datetime.datetime.now().strftime("%H:%M:%S"),
+                                    line.decode("utf-8", "replace").rstrip("\r"))
+                print(text, flush=True)
+                if out:
+                    out.write(text + "\n")
+                    out.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ser.close()
+        if out:
+            out.close()
+    return 0
+
+
+def cmd_doctor(args):
+    ok = True
+    print("espb %s" % VERSION)
+    print("python   : %s" % sys.version.split()[0])
+    major = esptool_major()
+    print("esptool  : %s" % ("missing  -> pip install esptool" if major is None else "installed (v%d)" % major))
+    ok &= major is not None
+    try:
+        import serial
+        print("pyserial : installed (%s)" % serial.__version__)
+    except ImportError:
+        print("pyserial : missing  -> pip install pyserial")
+        ok = False
+    print("am       : %s" % ("found" if shutil.which("am") else "not found (`espb start` will not work; start the app by hand)"))
+    st = read_status()
+    print("bridge   : %s" % ("running, device %s" % st.get("device", "?") if st else "not running (run `espb start`)"))
+    return 0 if ok else 1
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="espb", description="Flash and monitor an ESP32 from Termux via the ESP USB Bridge app.")
+    p.add_argument("--version", action="version", version="espb " + VERSION)
+    sub = p.add_subparsers(dest="command", metavar="command")
+
+    def esp_opts(sp, baud=460800):
+        sp.add_argument("--chip", default="auto", help="esp32, esp32s3, esp32c3, ... (default: auto)")
+        sp.add_argument("--baud", type=int, default=baud, help="flash speed (default: %d)" % baud)
+        sp.add_argument("--dry-run", action="store_true", help="only print the esptool command")
+
+    sub.add_parser("start", help="open the bridge app and start it").set_defaults(func=cmd_start)
+    sub.add_parser("status", help="show whether the bridge is running").set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("flash", help="write a .bin file to the board")
+    sp.add_argument("file")
+    sp.add_argument("--addr", default="0x0", help="flash address (default 0x0, right for a merged image)")
+    sp.add_argument("--erase", action="store_true", help="erase the whole flash first")
+    esp_opts(sp)
+    sp.set_defaults(func=cmd_flash)
+
+    sp = sub.add_parser("erase", help="erase the whole flash")
+    esp_opts(sp)
+    sp.set_defaults(func=simple_esptool("erase_flash"))
+
+    sp = sub.add_parser("info", help="chip and flash information")
+    esp_opts(sp)
+    sp.set_defaults(func=simple_esptool("flash_id"))
+
+    sp = sub.add_parser("mac", help="read the MAC address")
+    esp_opts(sp)
+    sp.set_defaults(func=simple_esptool("read_mac"))
+
+    sp = sub.add_parser("monitor", help="interactive serial monitor")
+    sp.add_argument("--baud", type=int, default=115200)
+    sp.add_argument("--reset", action="store_true", help="restart the board first")
+    sp.set_defaults(func=cmd_monitor)
+
+    sp = sub.add_parser("log", help="print timestamped serial lines, then exit")
+    sp.add_argument("--baud", type=int, default=115200)
+    sp.add_argument("--seconds", type=float, default=0, help="stop after N seconds (default: until Ctrl+C)")
+    sp.add_argument("--out", help="also append the lines to this file")
+    sp.add_argument("--reset", action="store_true", help="restart the board first")
+    sp.set_defaults(func=cmd_log)
+
+    sub.add_parser("doctor", help="check the setup").set_defaults(func=cmd_doctor)
+
+    args = p.parse_args(argv)
+    if not getattr(args, "func", None):
+        p.print_help()
+        return 0
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
