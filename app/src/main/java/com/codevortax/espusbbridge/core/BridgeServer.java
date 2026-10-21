@@ -108,6 +108,7 @@ public final class BridgeServer {
             if (old != null) old.close();
 
             final Rfc2217Session session = new Rfc2217Session(client, backend, toDevice, fromDevice);
+            session.logger = m -> listener.onLog(m);
             current = session;
             Thread t = new Thread(() -> {
                 listener.onLog("Client connected");

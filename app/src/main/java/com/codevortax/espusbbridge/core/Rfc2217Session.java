@@ -46,6 +46,11 @@ public final class Rfc2217Session {
     private boolean dtr, rts, brk;
     private int appliedBaud = -1, appliedData = -1, appliedStop = -1, appliedParity = -1;
 
+    /** Optional diagnostics sink (shown in the app's log). */
+    public volatile java.util.function.Consumer<String> logger;
+
+    private void log(String m) { java.util.function.Consumer<String> l = logger; if (l != null) l.accept(m); }
+
     public Rfc2217Session(Socket socket, SerialBackend port, AtomicLong toDevice, AtomicLong fromDevice) {
         this.socket = socket;
         this.port = port;
@@ -254,10 +259,10 @@ public final class Rfc2217Session {
     private int setControl(int v) {
         try {
             switch (v) {
-                case 8:  dtr = true;  port.setDtr(true);  return 8;
-                case 9:  dtr = false; port.setDtr(false); return 9;
-                case 11: rts = true;  port.setRts(true);  return 11;
-                case 12: rts = false; port.setRts(false); return 12;
+                case 8:  dtr = true;  port.setDtr(true);  log("DTR on");  return 8;
+                case 9:  dtr = false; port.setDtr(false); log("DTR off"); return 9;
+                case 11: rts = true;  port.setRts(true);  log("RTS on");  return 11;
+                case 12: rts = false; port.setRts(false); log("RTS off"); return 12;
                 case 5:  brk = true;  port.setBreak(true);  return 5;
                 case 6:  brk = false; port.setBreak(false); return 6;
                 case 7:  return dtr ? 8 : 9;                // request DTR state
@@ -266,7 +271,8 @@ public final class Rfc2217Session {
                 case 0: case 1: case 2: case 3:             // flow control: USB bridges do it themselves
                 default: return v;
             }
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            log("control " + v + " FAILED: " + e);
             return v;
         }
     }
@@ -280,6 +286,7 @@ public final class Rfc2217Session {
             appliedBaud = baud; appliedData = dataBits; appliedStop = stopBits; appliedParity = parity;
             return true;
         } catch (IOException | RuntimeException e) {
+            log("setParameters " + baud + " FAILED: " + e);
             return false;
         }
     }

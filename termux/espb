@@ -116,7 +116,7 @@ def esptool_major():
         return None
 
 
-def esptool_cmd(chip, baud, command, *args):
+def esptool_cmd(chip, baud, command, *args, before="default-reset"):
     """Builds an esptool command line. esptool 5 renamed `write_flash` to `write-flash`."""
     major = esptool_major()
     if major is None:
@@ -124,7 +124,8 @@ def esptool_cmd(chip, baud, command, *args):
     if major >= 5:
         command = command.replace("_", "-")
     return py_module("esptool", "--chip", chip, "--port", port_url(),
-                     "--baud", str(baud), command, *args)
+                     "--baud", str(baud), "--before", before.replace("_", "-") if major >= 5 else before.replace("-", "_"),
+                     command, *args)
 
 
 def run(cmd, dry_run):
@@ -172,7 +173,10 @@ def cmd_flash(args):
         rc = run(esptool_cmd(args.chip, args.baud, "erase_flash"), args.dry_run)
         if rc != 0:
             return rc
-    rc = run(esptool_cmd(args.chip, args.baud, "write_flash", args.addr, args.file), args.dry_run)
+    before = "no-reset" if args.manual else "default-reset"
+    if args.manual:
+        print("Manual mode: hold BOOT, tap EN (reset), then release BOOT once writing starts.")
+    rc = run(esptool_cmd(args.chip, args.baud, "write_flash", args.addr, args.file, before=before), args.dry_run)
     if rc == 0:
         print("\nDone. The board was reset. Watch it with:  espb monitor")
     else:
@@ -286,6 +290,7 @@ def main(argv=None):
     sp.add_argument("file")
     sp.add_argument("--addr", default="0x0", help="flash address (default 0x0, right for a merged image)")
     sp.add_argument("--erase", action="store_true", help="erase the whole flash first")
+    sp.add_argument("--manual", action="store_true", help="no automatic reset: put the board in download mode by hand (hold BOOT, tap EN)")
     esp_opts(sp)
     sp.set_defaults(func=cmd_flash)
 
