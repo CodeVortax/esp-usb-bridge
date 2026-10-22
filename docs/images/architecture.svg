@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 170" role="img" aria-label="ESP32 connects by USB to the bridge app, which serves RFC 2217 on localhost to Termux">
+  <style>
+    .box{fill:#f3f6fb;stroke:#4285F4;stroke-width:2;rx:12}
+    .t{font:600 15px sans-serif;fill:#1a2433;text-anchor:middle}
+    .s{font:12px sans-serif;fill:#51607a;text-anchor:middle}
+    .a{stroke:#34A853;stroke-width:2.5;fill:none;marker-end:url(#h)}
+    @media (prefers-color-scheme:dark){.box{fill:#1b2433}.t{fill:#e8eef9}.s{fill:#9fb0cc}}
+  </style>
+  <defs><marker id="h" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10z" fill="#34A853"/></marker></defs>
+  <rect class="box" x="10" y="35" width="190" height="100"/><text class="t" x="105" y="80">ESP32 board</text><text class="s" x="105" y="102">CP210x / CH340 / FTDI</text>
+  <rect class="box" x="285" y="35" width="190" height="100"/><text class="t" x="380" y="80">ESP USB Bridge app</text><text class="s" x="380" y="102">owns the USB port</text>
+  <rect class="box" x="560" y="35" width="190" height="100"/><text class="t" x="655" y="80">Termux</text><text class="s" x="655" y="102">espb · esptool · miniterm</text>
+  <path class="a" d="M200,85 H283"/><text class="s" x="242" y="72">USB OTG</text>
+  <path class="a" d="M475,85 H558"/><text class="s" x="517" y="72">127.0.0.1:2217</text>
+</svg>

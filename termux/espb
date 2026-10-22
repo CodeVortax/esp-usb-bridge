@@ -44,7 +44,7 @@ HOST = os.environ.get("ESPB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ESPB_PORT", "2217"))
 STATUS_PORT = int(os.environ.get("ESPB_STATUS_PORT", str(PORT + 1)))
 APP_ID = "com.codevortax.espusbbridge"
-VERSION = "0.1.0-beta"
+VERSION = "0.1.0"
 
 
 def port_url():
